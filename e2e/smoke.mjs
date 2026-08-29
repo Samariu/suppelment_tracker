@@ -329,6 +329,55 @@ async function run(scheme) {
   if (overlap > 0) fail(`tab bar covers the last control by ${Math.round(overlap)}px`);
   await page.screenshot({ path: `${OUT}/06-bottom-${scheme}.png` });
 
+  // --- the tab bar stays welded to the bottom of the screen ---
+  const barState = () =>
+    page.evaluate(() => {
+      const rect = document.querySelector('.tabs').getBoundingClientRect();
+      const doc = document.documentElement;
+      return {
+        bottomGap: Math.round(window.innerHeight - rect.bottom),
+        docScrollable: doc.scrollHeight > doc.clientHeight + 1,
+        bodyScrollable: document.body.scrollHeight > document.body.clientHeight + 1,
+        docScrollTop: Math.round(doc.scrollTop || window.scrollY),
+        overflowing: [...document.body.children]
+          .map((c) => ({
+            tag: c.tagName + (c.id ? `#${c.id}` : '') + (c.className ? `.${c.className}` : ''),
+            bottom: Math.round(c.getBoundingClientRect().bottom),
+            pos: getComputedStyle(c).position,
+          }))
+          .filter((c) => c.bottom > window.innerHeight + 1),
+      };
+    });
+
+  // Scrolled to the end of the longest view, with the list overscrolled hard.
+  await page.locator('#view').evaluate((n) => n.scrollTo(0, n.scrollHeight + 4000));
+  const scrolledState = await barState();
+  if (scrolledState.bottomGap !== 0) fail(`tab bar sat ${scrolledState.bottomGap}px off the bottom`);
+  if (scrolledState.docScrollable || scrolledState.bodyScrollable)
+    fail(`the document itself can scroll: ${JSON.stringify(scrolledState)}`);
+
+  // Nothing may move the page behind the shell — this is what dragged the bar
+  // out of view on a phone.
+  await page.evaluate(() => window.scrollBy(0, 600));
+  const afterScroll = await barState();
+  if (afterScroll.docScrollTop !== 0) fail(`the page scrolled to ${afterScroll.docScrollTop}`);
+  if (afterScroll.bottomGap !== 0) fail(`tab bar drifted ${afterScroll.bottomGap}px after a page scroll`);
+
+  // A viewport that shrinks and grows stands in for the browser's toolbars
+  // sliding away, and for the on-screen keyboard.
+  for (const height of [560, 720, 896]) {
+    await page.setViewportSize({ width: 414, height });
+    await page.waitForFunction(
+      (h) => Math.abs(document.querySelector('.tabs').getBoundingClientRect().bottom - h) <= 1,
+      height,
+      { timeout: 3000 },
+    ).catch(async () => {
+      const rect = await page.evaluate(() => document.querySelector('.tabs').getBoundingClientRect().bottom);
+      fail(`at ${height}px tall the tab bar ended at ${Math.round(rect)}`);
+    });
+  }
+  await page.setViewportSize({ width: 414, height: 896 });
+
   // --- backup round-trip through the real UI ---
   const download = await Promise.all([
     page.waitForEvent('download'),

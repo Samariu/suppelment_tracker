@@ -51,23 +51,49 @@
 
 * { box-sizing: border-box; }
 
+html {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
+  /* Pinning the document is what actually keeps the tab bar put: left scrollable,
+     a swipe past the end of a list rubber-bands the whole page on iOS and drags
+     the bar off screen with it. Fixed, there is nothing to drag. */
+  position: fixed;
+  inset: 0;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
   font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior-y: contain;
 }
 
-/* Fixed-height shell: the view scrolls internally so the tab bar never covers it. */
-#app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+/*
+ * Fixed-height shell: the view scrolls inside it, so the tab bar is never
+ * scrolled away and never covers content. The height falls back down the list
+ * — dvh tracks the browser's own toolbars, and --app-height (set from
+ * visualViewport in viewport.ts) catches what dvh misses, like the keyboard.
+ */
+#app {
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .view {
   flex: 1 1 auto;
   /* Without this a flex item refuses to shrink below its content height. */
   min-height: 0;
   overflow-y: auto;
+  /* Keep an overscroll at the end of the list from reaching the document. */
+  overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
   padding: 20px 16px 28px;
   max-width: 640px;
@@ -169,6 +195,9 @@ body {
 
 /* ---- cards, forms ---- */
 .card {
+  /* A containing block for the visually-hidden file input, so it resolves
+     inside the scrolling view instead of against the fixed body. */
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

@@ -2,6 +2,7 @@ import './styles.css';
 import { registerSW } from 'virtual:pwa-register';
 import { icon, type IconName } from './icons';
 import { el } from './ui';
+import { trackViewportHeight } from './viewport';
 import { renderToday } from './views/today';
 import { renderSupplements } from './views/supplements';
 import { renderStats } from './views/stats';
@@ -13,6 +14,9 @@ const TABS: { route: Route; label: string; icon: IconName }[] = [
   { route: 'supplements', label: 'Supplements', icon: 'pill' },
   { route: 'stats', label: 'Progress', icon: 'chart' },
 ];
+
+// Before the first render, so the shell is the right height from the outset.
+trackViewportHeight();
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app is missing from index.html');
