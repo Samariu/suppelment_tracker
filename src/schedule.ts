@@ -38,6 +38,30 @@ export function addDays(key: DateKey, days: number): DateKey {
   return toKey(new Date(year, month - 1, day + days));
 }
 
+/** The first day of the month a date falls in. */
+export function startOfMonth(key: DateKey): DateKey {
+  const { year, month } = parseKey(key);
+  return toKey(new Date(year, month - 1, 1));
+}
+
+/**
+ * Move whole months from the first of the month `key` is in. Navigation always
+ * starts from day 1, so there is no short-month clamping to worry about.
+ */
+export function addMonths(key: DateKey, months: number): DateKey {
+  const { year, month } = parseKey(key);
+  return toKey(new Date(year, month - 1 + months, 1));
+}
+
+/** True when both dates fall in the same calendar month. */
+export function sameMonth(a: DateKey, b: DateKey): boolean {
+  return startOfMonth(a) === startOfMonth(b);
+}
+
+export function formatMonthLabel(key: DateKey): string {
+  return keyToDate(key).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
 /** 0 = Sunday … 6 = Saturday. */
 export function weekdayOf(key: DateKey): number {
   return keyToDate(key).getDay();

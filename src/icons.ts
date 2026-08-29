@@ -8,6 +8,8 @@ const PATHS = {
   restore: 'M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5',
   trash: 'M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6',
   check: 'M20 6 9 17l-5-5',
+  left: 'M15 18l-6-6 6-6',
+  right: 'M9 18l6-6-6-6',
   pill: 'M10.5 20.5a5 5 0 0 1-7-7l7-7a5 5 0 0 1 7 7ZM8.5 8.5l7 7',
   chart: 'M3 3v16a2 2 0 0 0 2 2h16M7 15l4-5 3 3 5-6',
 } as const;

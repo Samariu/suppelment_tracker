@@ -1,45 +1,139 @@
 import { allLogs, allSupplements, clearAll } from '../db';
 import { downloadBackup, importBackup } from '../backup';
-import { adherence, adherenceBySupplement, buildHeatmap, type HeatCell } from '../stats';
-import { formatDateFull, todayKey } from '../schedule';
+import { adherence, adherenceBySupplement, buildMonth, type DayCell } from '../stats';
+import { addMonths, formatDateFull, formatMonthLabel, parseKey, sameMonth, startOfMonth, todayKey } from '../schedule';
+import { colorVar } from '../palette';
+import { icon } from '../icons';
 import { el, mount, percent, toast } from '../ui';
+import type { Supplement } from '../types';
 
-const WEEK_COUNT = 12;
-const DAY_LABELS = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun'] as const;
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
-const cellTitle = (cell: HeatCell): string => {
-  if (cell.isFuture) return formatDateFull(cell.date);
-  if (cell.due === 0) return `${formatDateFull(cell.date)} — nothing due`;
-  return `${formatDateFull(cell.date)} — ${cell.taken} of ${cell.due} taken`;
+/** Beyond this many dots a cell turns unreadable, so the rest become a +n. */
+const MAX_DOTS = 8;
+
+const dot = (supplement: Supplement, extraClass = ''): HTMLElement =>
+  el('span', {
+    class: `dot${extraClass}`,
+    'aria-hidden': 'true',
+    style: `--dot:${colorVar(supplement.color)}`,
+  });
+
+const cellTitle = (cell: DayCell): string => {
+  if (cell.isFuture || cell.isBeforeTracking) return formatDateFull(cell.date);
+  if (cell.due.length === 0) return `${formatDateFull(cell.date)} — nothing due`;
+  return `${formatDateFull(cell.date)} — ${cell.taken.length} of ${cell.due.length} taken`;
 };
 
-/** Heatmap, adherence figures, and the local-data controls. */
+/** Calendar, adherence figures, and the local-data controls. */
 export async function renderStats(root: HTMLElement): Promise<void> {
+  // Which month the calendar is showing, and which day the breakdown describes.
+  let month = startOfMonth(todayKey());
+  let selected = todayKey();
+
   const draw = async (): Promise<void> => {
     const today = todayKey();
     const [supplements, logs] = await Promise.all([allSupplements(), allLogs()]);
     const active = supplements.filter((s) => !s.archivedAt);
     const last7 = adherence(supplements, logs, today, 7);
     const last30 = adherence(supplements, logs, today, 30);
-    const heatmap = buildHeatmap(supplements, logs, today, WEEK_COUNT);
+    const grid = buildMonth(supplements, logs, month, today);
     const perSupplement = adherenceBySupplement(active, logs, today, 30);
+    const selectedCell = grid.weeks.flat().find((cell) => cell.date === selected);
 
-    const grid = el(
-      'div',
-      { class: 'heatmap__grid' },
-      heatmap.weeks.map((week) =>
+    const dayButton = (cell: DayCell): HTMLElement => {
+      const dots = cell.taken.slice(0, MAX_DOTS);
+      const overflow = cell.taken.length - dots.length;
+      const classes = [
+        'day',
+        !cell.inMonth && 'day--outside',
+        cell.isToday && 'day--today',
+        cell.date === selected && 'day--selected',
+        cell.isFuture && 'day--future',
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      return el(
+        'button',
+        {
+          class: classes,
+          type: 'button',
+          title: cellTitle(cell),
+          'aria-pressed': cell.date === selected,
+          'aria-label': cellTitle(cell),
+          onClick: () => {
+            selected = cell.date;
+            // Tapping a padding day follows the calendar into that month.
+            if (!cell.inMonth) month = startOfMonth(cell.date);
+            void draw();
+          },
+        },
+        [
+          el('span', { class: 'day__number', text: String(parseKey(cell.date).day) }),
+          el('span', { class: 'day__dots' }, [
+            ...dots.map((supplement) => dot(supplement)),
+            overflow > 0 && el('span', { class: 'day__more', text: `+${overflow}` }),
+          ]),
+        ],
+      );
+    };
+
+    const monthButton = (delta: number, label: string, iconName: 'left' | 'right'): HTMLElement =>
+      el(
+        'button',
+        {
+          class: 'icon-button',
+          type: 'button',
+          'aria-label': label,
+          onClick: () => {
+            month = addMonths(month, delta);
+            // Keep the breakdown on a day that is actually on screen.
+            selected = sameMonth(month, today) ? today : month;
+            void draw();
+          },
+        },
+        [icon(iconName)],
+      );
+
+    const dayPanel = (): HTMLElement => {
+      if (!selectedCell) return el('p', { class: 'panel__note', text: 'Pick a day to see what you took.' });
+      const heading = el('p', { class: 'panel__date', text: formatDateFull(selectedCell.date) });
+
+      if (selectedCell.isBeforeTracking) {
+        return el('div', { class: 'panel' }, [
+          heading,
+          el('p', { class: 'panel__note', text: 'Before you started tracking.' }),
+        ]);
+      }
+      if (selectedCell.due.length === 0) {
+        return el('div', { class: 'panel' }, [
+          heading,
+          el('p', { class: 'panel__note', text: 'Nothing was due this day.' }),
+        ]);
+      }
+
+      const takenIds = new Set(selectedCell.taken.map((s) => s.id));
+      return el('div', { class: 'panel' }, [
+        heading,
         el(
-          'div',
-          { class: 'heatmap__week' },
-          week.map((cell) => {
-            if (!cell) return el('span', { class: 'heat heat--pad' });
-            if (cell.isFuture || cell.isBeforeTracking) return el('span', { class: 'heat heat--pad' });
-            const modifier = cell.level === null ? 'heat--none' : `heat--l${cell.level}`;
-            return el('span', { class: `heat ${modifier}`, title: cellTitle(cell) });
+          'ul',
+          { class: 'panel__list' },
+          selectedCell.due.map((supplement) => {
+            const wasTaken = takenIds.has(supplement.id);
+            return el('li', { class: `panel__item${wasTaken ? '' : ' panel__item--missed'}` }, [
+              dot(supplement, wasTaken ? '' : ' dot--hollow'),
+              el('span', { class: 'panel__name', text: supplement.name }),
+              // The state is spelled out, never left to colour alone.
+              el('span', {
+                class: 'panel__state',
+                text: selectedCell.isFuture ? 'not yet' : wasTaken ? 'taken' : 'missed',
+              }),
+            ]);
           }),
         ),
-      ),
-    );
+      ]);
+    };
 
     const stat = (label: string, value: string, detail: string): HTMLElement =>
       el('div', { class: 'stat' }, [
@@ -82,22 +176,40 @@ export async function renderStats(root: HTMLElement): Promise<void> {
       ]),
 
       el('section', { class: 'card' }, [
-        el('h2', { class: 'card__title', text: `Last ${WEEK_COUNT} weeks` }),
-        el('div', { class: 'heatmap' }, [
-          el('div', { class: 'heatmap__days' }, DAY_LABELS.map((label) =>
-            el('span', { class: 'heatmap__day', text: label }),
-          )),
-          grid,
+        el('div', { class: 'calendar__head' }, [
+          monthButton(-1, 'Previous month', 'left'),
+          el('h2', { class: 'card__title calendar__month', text: formatMonthLabel(grid.month) }),
+          monthButton(1, 'Next month', 'right'),
         ]),
-        el('div', { class: 'legend' }, [
-          el('span', { class: 'legend__label', text: 'None' }),
-          ...[0, 1, 2, 3, 4].map((level) => el('span', { class: `heat heat--l${level}` })),
-          el('span', { class: 'legend__label', text: 'All' }),
+        el('div', { class: 'calendar' }, [
+          el(
+            'div',
+            { class: 'calendar__weekdays', 'aria-hidden': 'true' },
+            DAY_LABELS.map((label) => el('span', { class: 'calendar__weekday', text: label })),
+          ),
+          el(
+            'div',
+            { class: 'calendar__grid' },
+            grid.weeks.flat().map((cell) => dayButton(cell)),
+          ),
         ]),
+        !sameMonth(grid.month, today) &&
+          el('button', {
+            class: 'button button--quiet',
+            type: 'button',
+            text: 'Back to this month',
+            onClick: () => {
+              month = startOfMonth(today);
+              selected = today;
+              void draw();
+            },
+          }),
+        dayPanel(),
       ]),
 
       el('section', { class: 'card' }, [
         el('h2', { class: 'card__title', text: 'By supplement · last 30 days' }),
+        el('p', { class: 'card__note', text: 'These colours are the dots on the calendar.' }),
         perSupplement.length
           ? el(
               'ul',
@@ -105,6 +217,7 @@ export async function renderStats(root: HTMLElement): Promise<void> {
               perSupplement.map(({ supplement, taken, due, ratio }) =>
                 el('li', { class: 'bars__item' }, [
                   el('div', { class: 'bars__head' }, [
+                    dot(supplement),
                     el('span', { class: 'bars__name', text: supplement.name }),
                     el('span', { class: 'bars__value', text: percent(ratio) }),
                   ]),

@@ -10,7 +10,8 @@
     "test": "TZ=Europe/Berlin vitest run",
     "test:watch": "TZ=Europe/Berlin vitest",
     "e2e": "node e2e/smoke.mjs",
-    "e2e:offline": "node e2e/offline.mjs"
+    "e2e:offline": "node e2e/offline.mjs",
+    "e2e:migration": "node e2e/migration.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",

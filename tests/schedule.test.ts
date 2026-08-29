@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDays,
+  addMonths,
   dateRange,
   dayDiff,
   describeFrequency,
   formatDateLabel,
+  formatMonthLabel,
   isDue,
+  sameMonth,
+  startOfMonth,
   toKey,
   weekdayOf,
 } from '../src/schedule';
@@ -15,6 +19,7 @@ const supplement = (frequency: Frequency, overrides: Partial<Supplement> = {}): 
   id: 's1',
   name: 'Test',
   frequency,
+  color: 'blue',
   startDate: '2026-01-01',
   archivedAt: null,
   sortIndex: 0,
@@ -60,6 +65,29 @@ describe('date helpers', () => {
   it('reports weekdays with Sunday as 0', () => {
     expect(weekdayOf('2026-08-30')).toBe(0); // Sunday
     expect(weekdayOf('2026-08-31')).toBe(1); // Monday
+  });
+});
+
+describe('month helpers', () => {
+  it('snaps to the first of the month', () => {
+    expect(startOfMonth('2026-09-17')).toBe('2026-09-01');
+    expect(startOfMonth('2026-09-01')).toBe('2026-09-01');
+  });
+
+  it('steps whole months without landing on a short-month gap', () => {
+    expect(addMonths('2026-01-31', 1)).toBe('2026-02-01');
+    expect(addMonths('2026-12-15', 1)).toBe('2027-01-01');
+    expect(addMonths('2026-01-15', -1)).toBe('2025-12-01');
+    expect(addMonths('2026-03-15', -14)).toBe('2025-01-01');
+  });
+
+  it('compares months, not days', () => {
+    expect(sameMonth('2026-09-01', '2026-09-30')).toBe(true);
+    expect(sameMonth('2026-09-30', '2026-10-01')).toBe(false);
+  });
+
+  it('labels a month with its year', () => {
+    expect(formatMonthLabel('2026-09-17')).toMatch(/2026/);
   });
 });
 

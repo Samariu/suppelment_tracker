@@ -1,7 +1,9 @@
+import { colorByIndex, isColorKey } from './palette';
 import { logId, type DateKey, type LogEntry, type Supplement } from './types';
 
 const DB_NAME = 'supptracker';
-const DB_VERSION = 1;
+// v2 gave every supplement a calendar colour.
+const DB_VERSION = 2;
 const SUPPLEMENTS = 'supplements';
 const LOGS = 'logs';
 
@@ -26,7 +28,7 @@ export function openDb(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (event) => {
         const db = req.result;
         if (!db.objectStoreNames.contains(SUPPLEMENTS)) {
           db.createObjectStore(SUPPLEMENTS, { keyPath: 'id' });
@@ -36,12 +38,33 @@ export function openDb(): Promise<IDBDatabase> {
           logs.createIndex('by_date', 'date');
           logs.createIndex('by_supplement', 'supplementId');
         }
+        if (event.oldVersion > 0 && event.oldVersion < 2) {
+          backfillColors(req.transaction);
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
   }
   return dbPromise;
+}
+
+/**
+ * Hands colours to supplements stored before they existed. Written to the
+ * record rather than derived on read: a derived colour would follow the list
+ * position and repaint everything the first time the list is reordered.
+ */
+function backfillColors(tx: IDBTransaction | null): void {
+  if (!tx) return;
+  const store = tx.objectStore(SUPPLEMENTS);
+  const req = store.getAll() as IDBRequest<Supplement[]>;
+  req.onsuccess = () => {
+    const ordered = [...req.result].sort((a, b) => a.sortIndex - b.sortIndex);
+    ordered.forEach((supplement, index) => {
+      if (isColorKey(supplement.color)) return;
+      store.put({ ...supplement, color: colorByIndex(index) });
+    });
+  };
 }
 
 async function readAll<T>(store: string): Promise<T[]> {

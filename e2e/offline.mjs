@@ -46,7 +46,7 @@ if (!offlineDoses.includes('Magnesium 200mg')) fail(`offline list was ${offlineD
 
 // Navigating between views must also work with no network.
 await page.getByRole('link', { name: 'Progress' }).click();
-await page.locator('.heatmap__grid').waitFor();
+await page.locator('.calendar__grid').waitFor();
 const bars = await page.locator('.bars__name').count();
 if (bars !== 1) fail(`offline stats showed ${bars} supplements`);
 

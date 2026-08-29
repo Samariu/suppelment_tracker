@@ -1,4 +1,5 @@
 import { allLogs, allSupplements, replaceAll } from './db';
+import { colorByIndex, isColorKey } from './palette';
 import type { Frequency, LogEntry, Supplement } from './types';
 
 const FORMAT = 'supplement-tracker-backup';
@@ -64,6 +65,8 @@ function parseSupplement(value: unknown, index: number): Supplement | null {
     id: value.id,
     name: value.name,
     frequency,
+    // Backups written before colours existed still import cleanly.
+    color: isColorKey(value.color) ? value.color : colorByIndex(index),
     startDate: value.startDate,
     archivedAt: typeof value.archivedAt === 'string' ? value.archivedAt : null,
     sortIndex: Number.isFinite(Number(value.sortIndex)) ? Number(value.sortIndex) : index,
