@@ -1,4 +1,4 @@
-import { addDays, dateRange, dayDiff, isDue, weekdayOf } from './schedule';
+import { addDays, dateRange, dayDiff, isDue, startOfMonth, weekdayOf } from './schedule';
 import { logId, type DateKey, type LogEntry, type Supplement } from './types';
 
 export type DayTally = {
@@ -17,14 +17,6 @@ export type Adherence = {
 };
 
 export type SupplementAdherence = Adherence & { supplement: Supplement };
-
-export type HeatCell = DayTally & {
-  /** 0 = nothing taken … 4 = everything taken; null when nothing was due. */
-  level: number | null;
-  isFuture: boolean;
-  /** Before anything was being tracked — drawn blank rather than as an off day. */
-  isBeforeTracking: boolean;
-};
 
 const takenIndex = (logs: LogEntry[]): Set<string> => new Set(logs.map((l) => l.id));
 
@@ -86,65 +78,70 @@ export function adherenceBySupplement(
     .sort((a, b) => (a.ratio ?? 2) - (b.ratio ?? 2));
 }
 
-/** 0–4 shade bucket. Anything short of complete stays below the top level. */
-export function levelFor(taken: number, due: number): number | null {
-  if (due === 0) return null;
-  const ratio = taken / due;
-  if (ratio <= 0) return 0;
-  if (ratio >= 1) return 4;
-  if (ratio < 0.5) return 1;
-  if (ratio < 0.8) return 2;
-  return 3;
-}
-
-export type Heatmap = {
-  /** Columns of 7 cells, Monday at the top. `null` pads the first and last week. */
-  weeks: (HeatCell | null)[][];
-  start: DateKey;
-  end: DateKey;
+export type DayCell = {
+  date: DateKey;
+  /** False for the padding days that complete the first and last weeks. */
+  inMonth: boolean;
+  isToday: boolean;
+  isFuture: boolean;
+  /** Before anything was being tracked, so nothing can be read into it. */
+  isBeforeTracking: boolean;
+  /** Everything scheduled that day, in list order. */
+  due: Supplement[];
+  /** The subset actually logged, in the same order — one dot each. */
+  taken: Supplement[];
 };
 
-/**
- * A GitHub-style grid ending on `end`, padded so every column is a full
- * Monday–Sunday week.
- */
-export function buildHeatmap(
-  supplements: Supplement[],
-  logs: LogEntry[],
-  end: DateKey,
-  weekCount = 12,
-): Heatmap {
-  // The first day anything was being tracked; earlier cells are simply blank.
-  const trackingStart = supplements.reduce<DateKey | null>(
+export type MonthGrid = {
+  /** The first of the displayed month. */
+  month: DateKey;
+  /** Monday-first rows, padded at both ends to whole weeks. */
+  weeks: DayCell[][];
+};
+
+/** The earliest day anything was being tracked, or null when nothing is. */
+export function trackingStart(supplements: Supplement[]): DateKey | null {
+  return supplements.reduce<DateKey | null>(
     (earliest, s) => (earliest === null || dayDiff(s.startDate, earliest) > 0 ? s.startDate : earliest),
     null,
   );
-  // Walk back to the Monday that starts the earliest displayed week.
-  const daysSinceMonday = (weekdayOf(end) + 6) % 7;
-  const lastMonday = addDays(end, -daysSinceMonday);
-  const start = addDays(lastMonday, -7 * (weekCount - 1));
-  const gridEnd = addDays(lastMonday, 6);
+}
 
-  const tallies = tallyRange(supplements, logs, start, gridEnd);
-  const weeks: (HeatCell | null)[][] = [];
-  for (let w = 0; w < weekCount; w += 1) {
-    const column: (HeatCell | null)[] = [];
-    for (let d = 0; d < 7; d += 1) {
-      const tally = tallies[w * 7 + d];
-      if (!tally) {
-        column.push(null);
-        continue;
-      }
-      const isFuture = dayDiff(tally.date, end) < 0;
-      const isBeforeTracking = trackingStart === null || dayDiff(trackingStart, tally.date) < 0;
-      column.push({
-        ...tally,
-        level: isFuture || isBeforeTracking ? null : levelFor(tally.taken, tally.due),
-        isFuture,
-        isBeforeTracking,
-      });
-    }
-    weeks.push(column);
-  }
-  return { weeks, start, end: gridEnd };
+/**
+ * One calendar month, padded to whole Monday–Sunday weeks. Cells carry the
+ * supplements themselves so the dots and the day breakdown can share the work.
+ */
+export function buildMonth(
+  supplements: Supplement[],
+  logs: LogEntry[],
+  monthAnchor: DateKey,
+  today: DateKey,
+): MonthGrid {
+  const month = startOfMonth(monthAnchor);
+  const nextMonth = startOfMonth(addDays(month, 32));
+  const lastOfMonth = addDays(nextMonth, -1);
+  const started = trackingStart(supplements);
+  const takenIds = new Set(logs.map((l) => l.id));
+
+  // Pad back to Monday, forward to Sunday.
+  const gridStart = addDays(month, -((weekdayOf(month) + 6) % 7));
+  const gridEnd = addDays(lastOfMonth, 6 - ((weekdayOf(lastOfMonth) + 6) % 7));
+
+  const cells: DayCell[] = dateRange(gridStart, gridEnd).map((date) => {
+    const isFuture = dayDiff(date, today) < 0;
+    const due = supplements.filter((s) => isDue(s, date));
+    return {
+      date,
+      inMonth: startOfMonth(date) === month,
+      isToday: date === today,
+      isFuture,
+      isBeforeTracking: started === null || dayDiff(started, date) < 0,
+      due,
+      taken: due.filter((s) => takenIds.has(logId(date, s.id))),
+    };
+  });
+
+  const weeks: DayCell[][] = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return { month, weeks };
 }

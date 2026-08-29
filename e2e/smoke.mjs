@@ -115,10 +115,14 @@ async function run(scheme) {
     version: 1,
     exportedAt: new Date().toISOString(),
     supplements: [
-      { id: 'd3', name: 'Vitamin D3 5000 IU', frequency: { kind: 'daily' }, startDate: key(-10), archivedAt: null, sortIndex: 0 },
-      { id: 'iron', name: 'Iron 25mg', frequency: { kind: 'interval', everyNDays: 2, anchor: key(-10) }, startDate: key(-10), archivedAt: null, sortIndex: 1 },
+      { id: 'd3', name: 'Vitamin D3 5000 IU', frequency: { kind: 'daily' }, color: 'blue', startDate: key(-10), archivedAt: null, sortIndex: 0 },
+      { id: 'iron', name: 'Iron 25mg', frequency: { kind: 'interval', everyNDays: 2, anchor: key(-10) }, color: 'yellow', startDate: key(-10), archivedAt: null, sortIndex: 1 },
     ],
-    logs: [-9, -8, -7, -5, -4, -3].map((o) => ({ id: `${key(o)}|d3`, date: key(o), supplementId: 'd3', takenAt: new Date().toISOString() })),
+    logs: [
+      ...[-9, -8, -7, -5, -4, -3].map((o) => ({ id: `${key(o)}|d3`, date: key(o), supplementId: 'd3', takenAt: new Date().toISOString() })),
+      // Both taken on the same day, so one cell must show two dots.
+      { id: `${key(-8)}|iron`, date: key(-8), supplementId: 'iron', takenAt: new Date().toISOString() },
+    ],
   };
   const seedPath = `${OUT}/seed-${scheme}.json`;
   writeFileSync(seedPath, JSON.stringify(seed));
@@ -149,8 +153,12 @@ async function run(scheme) {
     () => document.querySelector('.segment--active')?.textContent === 'Today',
   );
   if ((await page.locator('.dose--taken').count()) !== 0) fail('back-fill leaked into today');
-  await page.locator('.dose').first().click();
-  await page.locator('.dose--taken').first().waitFor();
+  const dueToday = await page.locator('.dose').count();
+  if (dueToday < 2) fail(`expected at least 2 doses due today, got ${dueToday}`);
+  for (let i = 0; i < dueToday; i += 1) {
+    await page.locator('.dose:not(.dose--taken)').first().click();
+    await page.waitForFunction((n) => document.querySelectorAll('.dose--taken').length === n, i + 1);
+  }
 
   // --- persistence across a reload ---
   await page.reload({ waitUntil: 'networkidle' });
@@ -158,16 +166,156 @@ async function run(scheme) {
 
   // --- progress view ---
   await page.getByRole('link', { name: 'Progress' }).click();
-  await page.locator('.heatmap__grid').waitFor();
-  const weeks = await page.locator('.heatmap__week').count();
-  if (weeks !== 12) fail(`expected 12 heatmap weeks, got ${weeks}`);
-  const shaded = await page.locator('.heat--l4, .heat--l3, .heat--l2, .heat--l1').count();
-  if (shaded === 0) fail('no shaded heatmap cells after logging doses');
+  await page.locator('.calendar__grid').waitFor();
+
+  // The grid is whole Monday-to-Sunday weeks, so always a multiple of 7.
+  const cellCount = await page.locator('.day').count();
+  if (cellCount % 7 !== 0 || cellCount < 28) fail(`calendar had ${cellCount} cells`);
+  if ((await page.locator('.day--today').count()) !== 1) fail('today was not marked exactly once');
+
+  // One dot per dose actually taken. Keyed off today's cell, which is always on
+  // screen — seeded days can fall in the previous month depending on the date.
+  const todayDots = await page.locator('.day--today .day__dots .dot').count();
+  if (todayDots !== dueToday) fail(`today showed ${todayDots} dots for ${dueToday} taken`);
+
+  // Every swatch is reachable in one row without wrapping the picker.
+  // Distinct colours, so the dots identify which supplement rather than just counting.
+  const todayColours = await page.evaluate(() =>
+    [...document.querySelectorAll('.day--today .day__dots .dot')].map(
+      (d) => getComputedStyle(d).backgroundColor,
+    ),
+  );
+  if (new Set(todayColours).size !== todayDots)
+    fail(`today's dots repeated a colour: ${todayColours}`);
+
+  const dotted = await page.evaluate(() =>
+    [...document.querySelectorAll('.day')]
+      .map((d) => ({
+        day: d.querySelector('.day__number')?.textContent,
+        dots: d.querySelectorAll('.day__dots .dot').length,
+      }))
+      .filter((d) => d.dots > 0),
+  );
+  if (dotted.length < 2) fail(`expected several dotted days, got ${JSON.stringify(dotted)}`);
+
+  // A future day carries no dots at all.
+  const futureDots = await page.locator('.day--future .day__dots .dot').count();
+  if (futureDots !== 0) fail(`future days carried ${futureDots} dots`);
+
   const stats = await page.locator('.stat__value').allTextContents();
   if (!stats[0]?.endsWith('%')) fail(`7-day adherence looked wrong: ${stats}`);
   const bars = await page.locator('.bars__name').count();
   if (bars !== 2) fail(`expected 2 per-supplement bars, got ${bars}`);
   await page.screenshot({ path: `${OUT}/05-progress-${scheme}.png`, fullPage: true });
+
+  // --- the day breakdown names things, so identity is never colour alone ---
+  const selectDay = async (locator) => {
+    const number = await locator.locator('.day__number').textContent();
+    await locator.click();
+    await page.waitForFunction(
+      (n) => document.querySelector('.day--selected .day__number')?.textContent === n,
+      number,
+    );
+  };
+
+  await selectDay(page.locator('.day--today'));
+  await page.locator('.panel__list').waitFor();
+  const panel = await page.evaluate(() =>
+    [...document.querySelectorAll('.panel__item')].map((i) => ({
+      name: i.querySelector('.panel__name')?.textContent,
+      state: i.querySelector('.panel__state')?.textContent,
+      hollow: i.querySelector('.dot')?.classList.contains('dot--hollow'),
+    })),
+  );
+  if (!panel.length) fail('day breakdown was empty');
+  if (!panel.every((row) => ['taken', 'missed', 'not yet'].includes(row.state ?? '')))
+    fail(`unexpected states: ${JSON.stringify(panel)}`);
+  // A missed dose is a ring, a taken one is solid — shape, not just colour.
+  if (panel.some((row) => (row.state === 'missed') !== row.hollow))
+    fail(`dot shape did not match state: ${JSON.stringify(panel)}`);
+  await page.screenshot({ path: `${OUT}/05b-day-panel-${scheme}.png` });
+
+  // A past day with nothing logged: the grid shows no dot, but the panel still
+  // says what was due and marks it missed with a ring rather than a disc.
+  const missedDay = page
+    .locator('.day:not(.day--outside):not(.day--future):not(.day--today)')
+    .filter({ hasNot: page.locator('.dot') })
+    .last();
+  if ((await missedDay.count()) > 0) {
+    await selectDay(missedDay);
+    const missed = await page.evaluate(() =>
+      [...document.querySelectorAll('.panel__item')].map((i) => ({
+        state: i.querySelector('.panel__state')?.textContent,
+        hollow: i.querySelector('.dot')?.classList.contains('dot--hollow'),
+      })),
+    );
+    const due = missed.filter((r) => r.state === 'missed');
+    if (missed.length && !due.length) fail(`expected a missed row, got ${JSON.stringify(missed)}`);
+    if (due.some((r) => !r.hollow)) fail('a missed dose was drawn as a solid dot');
+    await page.screenshot({ path: `${OUT}/05c-missed-${scheme}.png` });
+  }
+
+  // A future day is neither taken nor missed — it hasn't happened.
+  const futureDay = page.locator('.day--future:not(.day--outside)').first();
+  if ((await futureDay.count()) > 0) {
+    await selectDay(futureDay);
+    const future = await page.locator('.panel__state').allTextContents();
+    if (future.some((state) => state !== 'not yet'))
+      fail(`future day showed ${future}`);
+  }
+
+  // --- month navigation ---
+  const thisMonth = await page.locator('.calendar__month').textContent();
+  await page.getByRole('button', { name: 'Previous month' }).click();
+  await page.waitForFunction(
+    (m) => document.querySelector('.calendar__month')?.textContent !== m,
+    thisMonth,
+  );
+  const prevMonth = await page.locator('.calendar__month').textContent();
+  if (prevMonth === thisMonth) fail('previous month did not change the calendar');
+  // The breakdown must follow the calendar rather than describing an off-screen day.
+  if ((await page.locator('.day--selected').count()) !== 1)
+    fail('paging left no visible selected day');
+  // Leaving the current month offers a way back, and it works.
+  await page.getByRole('button', { name: 'Back to this month' }).click();
+  await page.waitForFunction(
+    (m) => document.querySelector('.calendar__month')?.textContent === m,
+    thisMonth,
+  );
+  await page.getByRole('button', { name: 'Next month' }).click();
+  await page.waitForFunction(
+    (m) => document.querySelector('.calendar__month')?.textContent !== m,
+    thisMonth,
+  );
+  // A month with no history shows no dots rather than breaking.
+  if ((await page.locator('.day__dots .dot').count()) !== 0) fail('next month showed dots');
+  await page.getByRole('button', { name: 'Back to this month' }).click();
+  await page.waitForFunction(
+    (m) => document.querySelector('.calendar__month')?.textContent === m,
+    thisMonth,
+  );
+
+  // --- changing a colour repaints the calendar ---
+  const dotColour = () =>
+    page.evaluate(() => {
+      const d = document.querySelector('.day__dots .dot');
+      return d ? getComputedStyle(d).backgroundColor : null;
+    });
+  const beforeColour = await dotColour();
+  await page.getByRole('link', { name: 'Supplements' }).click();
+  await page.getByRole('button', { name: 'Edit Vitamin D3 5000 IU' }).click();
+  await page.locator('.swatches').waitFor();
+  await page.getByRole('radio', { name: 'Violet' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('.swatch--active')?.getAttribute('aria-label') === 'Violet',
+  );
+  await page.getByRole('button', { name: 'Save' }).click();
+  await page.waitForFunction(() => document.querySelector('.form') === null);
+  await page.getByRole('link', { name: 'Progress' }).click();
+  await page.locator('.calendar__grid').waitFor();
+  const afterColour = await dotColour();
+  if (!afterColour || afterColour === beforeColour)
+    fail(`dot colour did not change: ${beforeColour} -> ${afterColour}`);
   // Scrolled to the very bottom: the sticky tab bar must not cover the last card.
   await page.locator('#view').evaluate((n) => n.scrollTo(0, n.scrollHeight));
   await page.waitForFunction(
@@ -207,7 +355,7 @@ async function run(scheme) {
   // Bouncing between tabs must not accumulate visibility listeners on Today.
   for (let i = 0; i < 4; i += 1) {
     await page.getByRole('link', { name: 'Progress' }).click();
-    await page.locator('.heatmap__grid').waitFor();
+    await page.locator('.calendar__grid').waitFor();
     await page.getByRole('link', { name: 'Today' }).click();
     await page.locator('.dose').first().waitFor();
   }

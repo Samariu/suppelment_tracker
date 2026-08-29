@@ -1,3 +1,5 @@
+import type { ColorKey } from './palette';
+
 /** A calendar day in local time, formatted `YYYY-MM-DD`. */
 export type DateKey = string;
 
@@ -13,6 +15,8 @@ export type Supplement = {
   /** Free text, dose included by convention, e.g. "Magnesium 200mg". */
   name: string;
   frequency: Frequency;
+  /** Which palette slot its dots wear on the calendar. */
+  color: ColorKey;
   /** Nothing counts as due before this day. */
   startDate: DateKey;
   /** ISO timestamp once archived; archived supplements stop being due but keep their history. */

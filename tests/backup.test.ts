@@ -10,6 +10,7 @@ const valid = {
       id: 'a',
       name: 'Vitamin D3 5000 IU',
       frequency: { kind: 'daily' },
+      color: 'magenta',
       startDate: '2026-08-01',
       archivedAt: null,
       sortIndex: 0,
@@ -18,6 +19,7 @@ const valid = {
       id: 'b',
       name: 'Iron 25mg',
       frequency: { kind: 'interval', everyNDays: 2, anchor: '2026-08-01' },
+      color: 'green',
       startDate: '2026-08-01',
       archivedAt: null,
       sortIndex: 1,
@@ -35,6 +37,24 @@ describe('parseBackup', () => {
     expect(result.logs).toHaveLength(1);
     expect(result.skipped).toBe(0);
     expect(result.supplements[1]?.frequency).toEqual({ kind: 'interval', everyNDays: 2, anchor: '2026-08-01' });
+  });
+
+  it('keeps the colours a backup carries', () => {
+    const result = parseBackup(json(valid));
+    expect(result.supplements.map((s) => s.color)).toEqual(['magenta', 'green']);
+  });
+
+  it('fills in colours for backups written before they existed', () => {
+    const older = valid.supplements.map(({ color, ...rest }) => ({ ...rest, color }));
+    older.forEach((s) => delete (s as { color?: string }).color);
+    const result = parseBackup(json({ ...valid, supplements: older }));
+    expect(result.supplements.map((s) => s.color)).toEqual(['blue', 'yellow']);
+  });
+
+  it('replaces an unrecognised colour rather than storing it', () => {
+    const bogus = [{ ...valid.supplements[0], color: 'chartreuse' }];
+    const result = parseBackup(json({ ...valid, supplements: bogus }));
+    expect(result.supplements[0]?.color).toBe('blue');
   });
 
   it('rejects files that are not backups', () => {

@@ -14,8 +14,13 @@ and nothing leaves your device.
   (so iron can show up every second day), or *certain weekdays*.
 - **Back-fill yesterday** — forgot to log last night? Switch to Yesterday and tick it.
   Older days stay as they were, so the numbers keep meaning something.
-- **Progress** — 7- and 30-day adherence, a 12-week heatmap, and a per-supplement
-  breakdown sorted worst-first so gaps are easy to spot.
+- **Progress** — a month calendar where each day carries a coloured dot for every
+  supplement you took, with 7- and 30-day adherence above it and a per-supplement
+  breakdown below, sorted worst-first so gaps are easy to spot. Tap any day for a
+  named list of what was due and whether you took it; page between months with the
+  arrows.
+- **Colours** — each supplement gets one of eight preset colours, assigned automatically
+  when you add it and changeable in its edit form.
 - **Archive instead of delete** — archived supplements drop off the checklist but keep
   their history. Permanent deletion is a separate, confirmed action.
 - **Backup** — export everything as JSON and import it back on another device.
@@ -67,8 +72,9 @@ helper. The build is Vite plus `vite-plugin-pwa` for the manifest and service wo
 | Path | Contents |
 | --- | --- |
 | `src/types.ts` | The data model |
-| `src/schedule.ts` | Date maths and the `isDue` rules |
-| `src/stats.ts` | Adherence and heatmap aggregation |
+| `src/schedule.ts` | Date maths, month helpers, and the `isDue` rules |
+| `src/stats.ts` | Adherence figures and the calendar month grid |
+| `src/palette.ts` | The eight dot colours and how they are handed out |
 | `src/db.ts` | IndexedDB access |
 | `src/backup.ts` | Export, and a validating import |
 | `src/views/` | The three screens |
@@ -78,6 +84,15 @@ helper. The build is Vite plus `vite-plugin-pwa` for the manifest and service wo
 
 Dates are handled as local-time `YYYY-MM-DD` strings throughout, with day differences
 computed in UTC so a daylight-saving change can never shift a day.
+
+A supplement stores its colour as a slot name, never a hex, so the light and dark steps
+resolve from CSS at render time. The eight slots were checked with a palette validator
+against the app's real card surfaces: dots for different supplements share a cell, so
+every pair can be adjacent, and under that strict test no set larger than four stays
+separable for colourblind readers in both themes. The first four handed out are that
+best set — past four, colour is a hint rather than the whole story, which is why the
+calendar also keeps each supplement's dot in a stable position, names everything in the
+day breakdown, and uses the per-supplement list as its legend.
 
 ### Browser checks
 
@@ -90,7 +105,12 @@ npm install --no-save playwright && npx playwright install chromium
 npm run dev                       # in one terminal
 npm run e2e                       # drives the whole app, writes e2e/screenshots/
 
+npm run e2e:migration             # upgrading a pre-colour database
+
 BASE_PATH=/suppelment_tracker/ npm run build
 BASE_PATH=/suppelment_tracker/ npm run preview -- --port 5190
 npm run e2e:offline               # service worker, manifest, and a network cut
 ```
+
+Both scripts read `APP_URL`, and `CHROMIUM_PATH` if you want to point them at a browser
+you already have.

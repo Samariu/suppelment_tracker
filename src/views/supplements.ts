@@ -1,5 +1,6 @@
 import { allSupplements, deleteSupplement, putSupplement } from '../db';
 import { describeFrequency, todayKey } from '../schedule';
+import { PALETTE, colorVar, nextColor, type ColorKey } from '../palette';
 import { icon } from '../icons';
 import { el, mount, newId, toast } from '../ui';
 import type { Frequency, Supplement } from '../types';
@@ -17,6 +18,7 @@ const WEEKDAYS = [
 type Draft = {
   id: string | null;
   name: string;
+  color: ColorKey;
   kind: Frequency['kind'];
   everyNDays: number;
   anchor: string;
@@ -24,15 +26,25 @@ type Draft = {
   startDate: string;
 };
 
-const draftFrom = (supplement: Supplement | null): Draft => {
+const draftFrom = (supplement: Supplement | null, suggestedColor: ColorKey): Draft => {
   const today = todayKey();
   if (!supplement) {
-    return { id: null, name: '', kind: 'daily', everyNDays: 2, anchor: today, days: [1, 4], startDate: today };
+    return {
+      id: null,
+      name: '',
+      color: suggestedColor,
+      kind: 'daily',
+      everyNDays: 2,
+      anchor: today,
+      days: [1, 4],
+      startDate: today,
+    };
   }
   const f = supplement.frequency;
   return {
     id: supplement.id,
     name: supplement.name,
+    color: supplement.color,
     kind: f.kind,
     everyNDays: f.kind === 'interval' ? f.everyNDays : 2,
     anchor: f.kind === 'interval' ? f.anchor : supplement.startDate,
@@ -54,7 +66,9 @@ export async function renderSupplements(
   root: HTMLElement,
   options: { openAddForm: boolean },
 ): Promise<void> {
-  let editing: Draft | null = options.openAddForm ? draftFrom(null) : null;
+  let editing: Draft | null = null;
+  // Resolved on the first draw, once the colours already in use are known.
+  let pendingAdd = options.openAddForm;
   let showArchived = false;
 
   const save = async (draft: Draft, existing: Supplement | null, nextSortIndex: number): Promise<void> => {
@@ -71,6 +85,7 @@ export async function renderSupplements(
       id: existing?.id ?? newId(),
       name,
       frequency: frequencyFrom(draft),
+      color: draft.color,
       startDate: existing?.startDate ?? draft.startDate,
       archivedAt: existing?.archivedAt ?? null,
       sortIndex: existing?.sortIndex ?? nextSortIndex,
@@ -164,6 +179,29 @@ export async function renderSupplements(
         el('p', { class: 'field__hint', text: 'Include the dose if you want to see it on the checklist.' }),
       ]),
       el('div', { class: 'field' }, [
+        el('span', { class: 'field__label', id: 'colour-label', text: 'Colour' }),
+        el(
+          'div',
+          { class: 'swatches', role: 'radiogroup', 'aria-labelledby': 'colour-label' },
+          PALETTE.map(({ key, label }) =>
+            el('button', {
+              class: `swatch${draft.color === key ? ' swatch--active' : ''}`,
+              type: 'button',
+              role: 'radio',
+              'aria-checked': draft.color === key,
+              'aria-label': label,
+              title: label,
+              style: `--swatch:${colorVar(key)}`,
+              onClick: () => {
+                draft.color = key;
+                void draw();
+              },
+            }),
+          ),
+        ),
+        el('p', { class: 'field__hint', text: 'Used for its dots on the calendar.' }),
+      ]),
+      el('div', { class: 'field' }, [
         el('span', { class: 'field__label', text: 'How often' }),
         el('div', { class: 'segments segments--grid' }, [
           kindButton('daily', 'Every day'),
@@ -194,6 +232,12 @@ export async function renderSupplements(
     const active = supplements.filter((s) => !s.archivedAt);
     const archived = supplements.filter((s) => s.archivedAt);
     const nextSortIndex = supplements.reduce((max, s) => Math.max(max, s.sortIndex), -1) + 1;
+    const suggestedColor = nextColor(active.map((s) => s.color));
+
+    if (pendingAdd) {
+      pendingAdd = false;
+      editing = draftFrom(null, suggestedColor);
+    }
 
     const move = async (supplement: Supplement, delta: number): Promise<void> => {
       const index = active.findIndex((s) => s.id === supplement.id);
@@ -207,6 +251,11 @@ export async function renderSupplements(
 
     const item = (supplement: Supplement, index: number): HTMLElement =>
       el('li', { class: 'supp' }, [
+        el('span', {
+          class: 'dot dot--lg',
+          'aria-hidden': 'true',
+          style: `--dot:${colorVar(supplement.color)}`,
+        }),
         el('div', { class: 'supp__main' }, [
           el('p', { class: 'supp__name', text: supplement.name }),
           el('p', { class: 'supp__freq', text: describeFrequency(supplement.frequency) }),
@@ -243,7 +292,7 @@ export async function renderSupplements(
               type: 'button',
               'aria-label': `Edit ${supplement.name}`,
               onClick: () => {
-                editing = draftFrom(supplement);
+                editing = draftFrom(supplement, suggestedColor);
                 void draw();
               },
             },
@@ -294,7 +343,7 @@ export async function renderSupplements(
             type: 'button',
             text: '+ Add',
             onClick: () => {
-              editing = draftFrom(null);
+              editing = draftFrom(null, suggestedColor);
               void draw();
             },
           }),

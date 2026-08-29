@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { adherence, adherenceBySupplement, buildHeatmap, levelFor, tallyRange } from '../src/stats';
+import { adherence, adherenceBySupplement, buildMonth, tallyRange, trackingStart } from '../src/stats';
 import { logId, type Frequency, type LogEntry, type Supplement } from '../src/types';
 
 const supplement = (id: string, frequency: Frequency, overrides: Partial<Supplement> = {}): Supplement => ({
   id,
   name: id,
   frequency,
+  color: 'blue',
   startDate: '2026-01-01',
   archivedAt: null,
   sortIndex: 0,
@@ -79,45 +80,73 @@ describe('adherenceBySupplement', () => {
   });
 });
 
-describe('levelFor', () => {
-  it('buckets partial days below the top shade and empty days at the bottom', () => {
-    expect(levelFor(0, 0)).toBeNull();
-    expect(levelFor(0, 3)).toBe(0);
-    expect(levelFor(1, 3)).toBe(1);
-    expect(levelFor(2, 3)).toBe(2);
-    expect(levelFor(4, 5)).toBe(3);
-    expect(levelFor(3, 3)).toBe(4);
+describe('buildMonth', () => {
+  it('pads the month out to whole Monday-to-Sunday weeks', () => {
+    // September 2026 starts on a Tuesday and ends on a Wednesday.
+    const grid = buildMonth([daily], [], '2026-09-14', '2026-09-30');
+    expect(grid.month).toBe('2026-09-01');
+    expect(grid.weeks.every((week) => week.length === 7)).toBe(true);
+    expect(grid.weeks[0]?.[0]?.date).toBe('2026-08-31'); // the Monday before
+    expect(grid.weeks[0]?.[0]?.inMonth).toBe(false);
+    expect(grid.weeks[0]?.[1]?.date).toBe('2026-09-01');
+    expect(grid.weeks[0]?.[1]?.inMonth).toBe(true);
+    expect(grid.weeks.at(-1)?.at(-1)?.date).toBe('2026-10-04'); // the Sunday after
+  });
+
+  it('handles a month that begins on a Sunday without an empty leading week', () => {
+    // November 2026 starts on a Sunday: it needs six pad days in front.
+    const grid = buildMonth([daily], [], '2026-11-01', '2026-11-30');
+    expect(grid.weeks[0]?.[0]?.date).toBe('2026-10-26');
+    expect(grid.weeks[0]?.[6]?.date).toBe('2026-11-01');
+    expect(grid.weeks[0]?.[6]?.inMonth).toBe(true);
+  });
+
+  it('spans six rows when a 31-day month starts late in the week', () => {
+    // August 2026 starts on a Saturday: six pad days in front plus 31 days.
+    expect(buildMonth([daily], [], '2026-08-10', '2026-08-31').weeks).toHaveLength(6);
+    // September 2026 starts on a Tuesday and fits in five.
+    expect(buildMonth([daily], [], '2026-09-10', '2026-09-30').weeks).toHaveLength(5);
+  });
+
+  it('gives a cell one taken entry per logged dose, in list order', () => {
+    // The every-second-day rule anchored at 2026-01-01 lands on the 2nd, not the 1st.
+    const logs = [took('2026-09-02', 'daily'), took('2026-09-02', 'iron')];
+    const grid = buildMonth([daily, everyOther], logs, '2026-09-02', '2026-09-30');
+    const cell = grid.weeks.flat().find((c) => c.date === '2026-09-02');
+    expect(cell?.due.map((s) => s.id)).toEqual(['daily', 'iron']);
+    expect(cell?.taken.map((s) => s.id)).toEqual(['daily', 'iron']);
+  });
+
+  it('only counts a dose on a day the supplement was actually due', () => {
+    // 2026-09-01 is an off day for the every-second-day rule, so a stray log there
+    // must not produce a dot.
+    const grid = buildMonth([everyOther], [took('2026-09-01', 'iron')], '2026-09-01', '2026-09-30');
+    const off = grid.weeks.flat().find((c) => c.date === '2026-09-01');
+    expect(off?.due).toEqual([]);
+    expect(off?.taken).toEqual([]);
+    const on = grid.weeks.flat().find((c) => c.date === '2026-09-02');
+    expect(on?.due.map((s) => s.id)).toEqual(['iron']);
+    expect(on?.taken).toEqual([]);
+  });
+
+  it('marks today, future days, and days before tracking began', () => {
+    const late = supplement('late', { kind: 'daily' }, { startDate: '2026-09-10' });
+    const grid = buildMonth([late], [], '2026-09-01', '2026-09-15');
+    const at = (date: string) => grid.weeks.flat().find((c) => c.date === date);
+    expect(at('2026-09-09')).toMatchObject({ isBeforeTracking: true, isFuture: false, due: [] });
+    expect(at('2026-09-15')).toMatchObject({ isToday: true, isFuture: false });
+    expect(at('2026-09-16')).toMatchObject({ isToday: false, isFuture: true });
+    // A future day still knows what is scheduled, it just hasn't happened.
+    expect(at('2026-09-16')?.due.map((s) => s.id)).toEqual(['late']);
+    expect(at('2026-09-16')?.taken).toEqual([]);
   });
 });
 
-describe('buildHeatmap', () => {
-  it('lays out full Monday-to-Sunday columns ending in the current week', () => {
-    const map = buildHeatmap([daily], [], '2026-08-29', 12); // a Saturday
-    expect(map.weeks).toHaveLength(12);
-    expect(map.weeks.every((week) => week.length === 7)).toBe(true);
-    expect(map.start).toBe('2026-06-08'); // Monday, 11 weeks earlier
-    expect(map.end).toBe('2026-08-30'); // Sunday of the current week
-  });
-
-  it('marks days after today as future rather than missed', () => {
-    const map = buildHeatmap([daily], [], '2026-08-29', 1);
-    const week = map.weeks[0] ?? [];
-    expect(week[5]).toMatchObject({ date: '2026-08-29', isFuture: false, level: 0 });
-    expect(week[6]).toMatchObject({ date: '2026-08-30', isFuture: true, level: null });
-  });
-
-  it('leaves days from before tracking started blank, not as misses', () => {
-    const started = supplement('late', { kind: 'daily' }, { startDate: '2026-08-27' });
-    const map = buildHeatmap([started], [], '2026-08-29', 1);
-    const week = map.weeks[0] ?? [];
-    expect(week[1]).toMatchObject({ date: '2026-08-25', isBeforeTracking: true, level: null });
-    expect(week[3]).toMatchObject({ date: '2026-08-27', isBeforeTracking: false, level: 0 });
-  });
-
-  it('leaves days with nothing due unshaded', () => {
-    const map = buildHeatmap([everyOther], [took('2026-08-29', 'iron')], '2026-08-29', 1);
-    const week = map.weeks[0] ?? [];
-    expect(week[5]).toMatchObject({ due: 1, taken: 1, level: 4 }); // Sat 29th: due and taken
-    expect(week[4]).toMatchObject({ due: 0, taken: 0, level: null }); // Fri 28th: off day
+describe('trackingStart', () => {
+  it('is the earliest start date, or null when nothing is tracked', () => {
+    const late = supplement('late', { kind: 'daily' }, { startDate: '2026-09-10' });
+    expect(trackingStart([daily, late])).toBe('2026-01-01');
+    expect(trackingStart([late])).toBe('2026-09-10');
+    expect(trackingStart([])).toBeNull();
   });
 });
