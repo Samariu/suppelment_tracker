@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Supplement Tracker">
+  <rect width="512" height="512" rx="112" fill="#2f855a"/>
+  <g transform="rotate(-45 256 256)">
+    <rect x="146" y="196" width="220" height="120" rx="60" fill="#ffffff"/>
+    <path d="M256 196h50a60 60 0 0 1 60 60 60 60 0 0 1-60 60h-50z" fill="#9ae6b4"/>
+    <rect x="248" y="196" width="16" height="120" fill="#2f855a" opacity=".35"/>
+  </g>
+</svg>
